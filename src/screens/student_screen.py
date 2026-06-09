@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 from src.pipelines.face_pipeline import predict_face_login, get_face_embeddings, train_classifier
 from src.pipelines.voice_pipeline import get_voice_embedding
-from src.database.db import get_all_students, create_student, get_student_subjects, get_student_attendance, unenroll_student_to_subject
+from src.database.db import get_all_students, create_student, get_student_subjects, get_student_attendance, unenroll_student_to_subject, enroll_student_to_subject
 import time
 
 from src.components.dialog_enroll import enroll_dialog
@@ -18,11 +18,29 @@ from src.components.subject_card import subject_card
 def student_dashboard():
     student_data = st.session_state.student_data
     student_id = student_data['student_id']
-    # Auto-enroll if came from QR code
-    if st.session_state.get('auto_join_code'):
-        enroll_dialog()
-        st.session_state.pop('auto_join_code')  # clear after showing
-        
+
+    # Silent auto-enroll if came from QR code
+    auto_code = st.session_state.get('auto_join_code')
+    if auto_code:
+        try:
+            from src.database.config import supabase
+            res = supabase.collection("subjects").get_list(1, 1, {
+                "filter": f'subject_code="{auto_code}"'
+            })
+            if res.items:
+                subject = res.items[0]
+                result = enroll_student_to_subject(student_id, subject.id)
+                if result:
+                    st.toast(f"Auto-enrolled in {subject.name}!")
+                else:
+                    st.toast(f"Already enrolled in {subject.name}!")
+            else:
+                st.toast("Subject code not found!")
+        except Exception as e:
+            print(f"Auto-enroll error: {e}")
+        finally:
+            st.session_state.pop('auto_join_code')
+
     c1, c2 = st.columns(2, vertical_alignment='center', gap='xxlarge')
     with c1:
         header_dashboard()
@@ -30,7 +48,7 @@ def student_dashboard():
         st.subheader(f"""Welcome, {student_data['name']} """)
         if st.button("Logout", type='secondary', key='loginbackbtn', shortcut="control+backspace"):
             st.session_state['is_logged_in'] = False
-            del st.session_state.student_data 
+            del st.session_state.student_data
             st.rerun()
 
     st.space()
@@ -64,7 +82,7 @@ def student_dashboard():
         sid = sub['subject_id']
 
         stats = stats_map.get(sid, {"total": 0, "attended": 0})
-        
+
         def unenroll_button(sid=sid, sub=sub):
             if st.button("Unenroll from this course", type='tertiary', width='stretch', icon=':material/delete_forever:'):
                 unenroll_student_to_subject(student_id, sid)
@@ -82,7 +100,7 @@ def student_dashboard():
                 ],
                 footer_callback=lambda: unenroll_button(sid, sub)
             )
-    
+
     footer_dashboard()
 
 
@@ -100,7 +118,7 @@ def student_screen():
     if "student_data" in st.session_state:
         student_dashboard()
         return
-    
+
     c1, c2 = st.columns(2, vertical_alignment='center', gap='xxlarge')
     with c1:
         header_dashboard()
@@ -112,16 +130,16 @@ def student_screen():
     st.header('Login using FaceID', text_alignment='center')
     st.space()
     st.space()
-    
+
     show_registration = False
     photo_source = st.camera_input("Position your face in the center")
 
     if photo_source:
         img = np.array(Image.open(photo_source))
-        
+
         with st.spinner('AI is scanning..'):
             student_id, message = predict_face_login(img)
-            
+
             if student_id is None and message == "No face detected":
                 st.warning('Face not found!')
             elif student_id:
@@ -138,7 +156,7 @@ def student_screen():
             else:
                 st.info('Face not recognized! You might be a new student!')
                 show_registration = True
-    
+
     if show_registration:
         with st.container(border=True):
             st.header('Register new Profile')
